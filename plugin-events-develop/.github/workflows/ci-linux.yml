@@ -1,0 +1,96 @@
+name: Linux
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+      - 'feature/*'
+      - 'hotfix/*'
+      - 'release/*'
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    name: "Lint on PHP ${{ matrix.php-versions }}"
+
+    strategy:
+      matrix:
+        php-versions: [ '8.1', '8.3' ]
+        coverage: [none]
+      fail-fast: false
+
+    steps:
+      - name: PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-versions }}
+          tools: composer
+          coverage: ${{ matrix.coverage }}
+
+      - name: Checkout Galette core
+        uses: actions/checkout@v4
+        with:
+          repository: galette/galette
+          path: galette-core
+          fetch-depth: 1
+          ref: develop
+
+      - name: Checkout plugin
+        uses: actions/checkout@v4
+        with:
+          path: galette-core/galette/plugins/plugin-events
+
+      - name: Get composer cache directory
+        id: composer-cache
+        run: |
+          echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: |
+          cd galette-core/galette
+          composer install --ignore-platform-reqs
+
+      - name: CS
+        run: |
+          cd galette-core/galette/plugins/plugin-events
+          ../../vendor/bin/phpcs lib/ ./*.php
+
+      - name: Twig CS
+        run: |
+          cd galette-core/galette/plugins/plugin-events
+          ../../vendor/bin/twigcs templates/default --severity error --display blocking
+
+      - name: Check missing symbols
+        run: |
+          cd galette-core/galette/plugins/plugin-events
+          composer require maglnet/composer-require-checker -W
+          vendor/bin/composer-require-checker check --config-file=.composer-require-checker.config.json ../../composer.json
+        if: matrix.php-versions == '8.3'
+
+      - name: PHPStan checks
+        run: |
+          cd galette-core/galette/plugins/plugin-events
+          ../../vendor/bin/phpstan analyze --ansi --memory-limit=2G --no-interaction --no-progress
+
+      - name: Headers checks
+        run: |
+          cd galette-core/galette/plugins/plugin-events
+          ../../vendor/bin/docheader --docheader=../../../.docheader check lib ./*.php
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+
+      - name: Build JS
+        run: |
+          cd galette-core/galette/plugins/plugin-events
+          npm install
+          npm run-script build
